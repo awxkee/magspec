@@ -1,0 +1,27 @@
+[package]
+name = "magspec"
+version = "0.1.0"
+edition = "2024"
+description = "Short-time fourier transform"
+readme = "README.md"
+keywords = ["dsp", "fourier", "stft", "spectrogram"]
+license = "BSD-3-Clause OR Apache-2.0"
+authors = ["Radzivon Bartoshyk"]
+documentation = "https://github.com/awxkee/magspec"
+categories = ["algorithms", "science"]
+homepage = "https://github.com/awxkee/magspec"
+repository = "https://github.com/awxkee/magspec"
+exclude = ["*.jpg", "/assets", "*.png", "*.sh", "/assets/*"]
+rust-version = "1.87.0"
+
+[dependencies]
+zaft = "0.3"
+num-traits = "0.2.19"
+pxwindow = "0.1.1"
+num-complex = "0.4.6"
+
+[package.metadata.docs.rs]
+# To build locally:
+# RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --all-features --no-deps --open --manifest-path ./Cargo.toml
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

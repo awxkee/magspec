@@ -1,0 +1,254 @@
+/*
+ * // Copyright (c) Radzivon Bartoshyk 2/2026. All rights reserved.
+ * //
+ * // Redistribution and use in source and binary forms, with or without modification,
+ * // are permitted provided that the following conditions are met:
+ * //
+ * // 1.  Redistributions of source code must retain the above copyright notice, this
+ * // list of conditions and the following disclaimer.
+ * //
+ * // 2.  Redistributions in binary form must reproduce the above copyright notice,
+ * // this list of conditions and the following disclaimer in the documentation
+ * // and/or other materials provided with the distribution.
+ * //
+ * // 3.  Neither the name of the copyright holder nor the names of its
+ * // contributors may be used to endorse or promote products derived from
+ * // this software without specific prior written permission.
+ * //
+ * // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * // AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * // IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * // DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * // FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * // DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * // SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * // CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+use num_complex::Complex;
+use num_traits::real::Real;
+use num_traits::{MulAdd, Num, Zero};
+use std::fmt::Debug;
+use std::ops::{Div, Mul, MulAssign};
+use std::sync::Arc;
+use zaft::{R2CFftExecutor, Zaft};
+
+mod error;
+mod mla;
+mod run;
+
+use crate::run::StftExecutorImplReal;
+pub use error::MagspecError;
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct StftOptions {
+    /// FFT size / window length in samples.
+    ///
+    /// This determines the frequency resolution of the transform.
+    pub len: usize,
+    /// Number of samples between successive frames.
+    ///
+    /// Smaller values increase time resolution and overlap.
+    pub hop_size: usize,
+    /// Window function applied to each frame before the FFT.
+    pub window: StftWindow,
+    /// If `true`, normalize FFT output by `1 / sqrt(len)`.
+    ///
+    /// This affects amplitude scaling of the resulting spectrum.
+    pub normalize: bool,
+}
+
+pub struct Magspec {}
+
+impl Magspec {
+    pub fn make_forward_f32(
+        options: StftOptions,
+    ) -> Result<Arc<dyn StftExecutor<f32>>, MagspecError> {
+        Ok(Arc::new(StftExecutorImplReal::new(
+            options.len,
+            options.hop_size,
+            options.window,
+            options.normalize,
+        )?))
+    }
+}
+
+pub(crate) trait StftSample:
+    Copy
+    + 'static
+    + FftFactory
+    + WindowFactory
+    + Mul<Self, Output = Self>
+    + Zero
+    + Clone
+    + Num
+    + Div<Self, Output = Self>
+    + MulAssign
+    + MulAdd<Self, Output = Self>
+    + Real
+{
+}
+
+impl StftSample for f32 {}
+impl StftSample for f64 {}
+
+pub(crate) trait FftFactory {
+    fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError>;
+}
+
+pub(crate) trait WindowFactory: Sized {
+    fn make_window(len: usize, stft_window: StftWindow) -> Vec<Self>;
+}
+
+impl WindowFactory for f32 {
+    fn make_window(len: usize, stft_window: StftWindow) -> Vec<Self> {
+        match stft_window {
+            StftWindow::Hann => pxwindow::Pxwindow::hann_f32(len),
+            StftWindow::Hamming => pxwindow::Pxwindow::hamming_f32(len),
+            StftWindow::Blackman => pxwindow::Pxwindow::blackman_f32(len),
+        }
+    }
+}
+
+impl WindowFactory for f64 {
+    fn make_window(len: usize, stft_window: StftWindow) -> Vec<Self> {
+        match stft_window {
+            StftWindow::Hann => pxwindow::Pxwindow::hann_f64(len),
+            StftWindow::Hamming => pxwindow::Pxwindow::hamming_f64(len),
+            StftWindow::Blackman => pxwindow::Pxwindow::blackman_f64(len),
+        }
+    }
+}
+
+impl FftFactory for f32 {
+    fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError> {
+        Zaft::make_r2c_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+}
+
+impl FftFactory for f64 {
+    fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError> {
+        Zaft::make_r2c_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+}
+
+#[derive(Debug)]
+/// Shared storage type
+pub enum BufferStoreMut<'a, T> {
+    Borrowed(&'a mut [T]),
+    Owned(Vec<T>),
+}
+
+impl<T> BufferStoreMut<'_, T> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn borrow(&self) -> &[T] {
+        match self {
+            Self::Borrowed(p_ref) => p_ref,
+            Self::Owned(vec) => vec,
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn borrow_mut(&mut self) -> &mut [T] {
+        match self {
+            Self::Borrowed(p_ref) => p_ref,
+            Self::Owned(vec) => vec,
+        }
+    }
+}
+
+/// Executor trait for computing the Short-Time Fourier Transform (STFT).
+///
+/// Implementations provide forward computation for real-valued input
+/// signals, producing complex spectra or magnitude-only representations.
+pub trait StftExecutor<T>
+where
+    [T]: ToOwned<Owned = Vec<T>>,
+    [Complex<T>]: ToOwned<Owned = Vec<Complex<T>>>,
+{
+    /// Allocates a complex-valued output frame for a given input length.
+    fn new_complex_frame(
+        &self,
+        input_len: usize,
+    ) -> Result<StftFrameMut<'_, Complex<T>>, MagspecError>;
+    /// Allocates a real-valued (magnitude) output frame for a given input length.
+    fn new_frame(&self, input_len: usize) -> Result<StftFrameMut<'_, T>, MagspecError>;
+    /// Computes the complex STFT of the input signal.
+    fn execute(&self, input: &[T]) -> Result<StftFrameMut<'_, Complex<T>>, MagspecError>;
+    /// Computes the complex STFT using a preallocated output frame and scratch buffer.
+    fn execute_with_scratch(
+        &self,
+        input: &[T],
+        into: &mut StftFrameMut<'_, Complex<T>>,
+        scratch: &mut [Complex<T>],
+    ) -> Result<(), MagspecError>;
+
+    /// Computes the magnitude |X| STFT of the input signal.
+    fn execute_magnitude(&self, input: &[T]) -> Result<StftFrameMut<'_, T>, MagspecError>;
+    /// Computes the magnitude STFT using a preallocated output frame and scratch buffer.
+    fn execute_magnitude_with_scratch(
+        &self,
+        input: &[T],
+        into: &mut StftFrameMut<'_, T>,
+        scratch: &mut [Complex<T>],
+    ) -> Result<(), MagspecError>;
+    /// Returns the required scratch buffer size (in complex elements)
+    /// for forward STFT execution.
+    fn forward_scratch_size(&self) -> usize;
+}
+
+/// Immutable STFT result frame.
+///
+/// The data is stored in row-major form with:
+/// - `width`  = number of time frames
+/// - `height` = number of frequency bins
+pub struct StftFrame<'a, T>
+where
+    [T]: ToOwned,
+{
+    /// Flattened 2D data buffer of size `width * height`.
+    pub data: std::borrow::Cow<'a, [T]>,
+    /// Number of time frames.
+    pub width: usize,
+    /// Number of frequency bins.
+    pub height: usize,
+}
+
+/// Mutable STFT result frame used for zero-allocation execution paths.
+pub struct StftFrameMut<'a, T>
+where
+    [T]: ToOwned,
+{
+    /// Mutable backing storage of size `width * height`.
+    pub data: BufferStoreMut<'a, T>,
+    /// Number of time frames.
+    pub width: usize,
+    /// Number of frequency bins.
+    pub height: usize,
+}
+
+impl<T> StftFrameMut<'_, T>
+where
+    [T]: ToOwned,
+{
+    pub fn as_ref(&self) -> StftFrame<'_, T> {
+        StftFrame {
+            data: std::borrow::Cow::Borrowed(self.data.borrow()),
+            width: self.width,
+            height: self.height,
+        }
+    }
+}
+
+/// Window functions supported by the STFT executor.
+#[derive(Clone, Default, Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Copy)]
+pub enum StftWindow {
+    /// Hann window (default).
+    #[default]
+    Hann,
+    /// Hamming window.
+    Hamming,
+    /// Blackman window.
+    Blackman,
+}
