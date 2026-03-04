@@ -41,7 +41,7 @@ mod run;
 use crate::run::StftExecutorImplReal;
 pub use error::MagspecError;
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StftOptions {
     /// FFT size / window length in samples.
     ///
@@ -57,20 +57,43 @@ pub struct StftOptions {
     ///
     /// This affects amplitude scaling of the resulting spectrum.
     pub normalize: bool,
+    ///  `True` will center DFT cisoids at the window for each shift `u`:
+    ///      Sm[u, k] = sum_{0}^{N-1} f[n] * g[n - u] * exp(-j*2pi*k*(n - u)/N)
+    ///  as opposed to usual STFT:
+    ///      S[u, k]  = sum_{0}^{N-1} f[n] * g[n - u] * exp(-j*2pi*k*n/N)
+    ///
+    ///  Most implementations (including `scipy`, `librosa`) compute *neither*,
+    ///  but rather center the window for each slice, thus shifting DFT bases
+    ///  relative to n=0 (t=0). These create spectra that, viewed as signals, are
+    ///  of high frequency, making inversion and synchrosqueezing very unstable.
+    pub modulation: bool,
 }
 
+/// Factory for creating Short-Time Fourier Transform (STFT) executors
+/// that compute magnitude spectrograms.
 pub struct Magspec {}
 
 impl Magspec {
+    /// Create a single-precision (f32) STFT magnitude spectrogram executor.
+    ///
+    /// Pre-computes the window function and FFT twiddle factors for the given
+    /// options, so this call may allocate. The returned executor is cheaply
+    /// cloneable via [`Arc`] and safe to share across threads.
     pub fn make_forward_f32(
         options: StftOptions,
     ) -> Result<Arc<dyn StftExecutor<f32>>, MagspecError> {
-        Ok(Arc::new(StftExecutorImplReal::new(
-            options.len,
-            options.hop_size,
-            options.window,
-            options.normalize,
-        )?))
+        Ok(Arc::new(StftExecutorImplReal::new(options)?))
+    }
+
+    /// Create a double-precision (f64) STFT magnitude spectrogram executor.
+    ///
+    /// Identical to [`make_forward_f32`](Self::make_forward_f32) but operates
+    /// on `f64` samples. Use this when higher numerical precision is required,
+    /// at the cost of roughly twice the memory and compute.
+    pub fn make_forward_f64(
+        options: StftOptions,
+    ) -> Result<Arc<dyn StftExecutor<f64>>, MagspecError> {
+        Ok(Arc::new(StftExecutorImplReal::new(options)?))
     }
 }
 
@@ -107,6 +130,8 @@ impl WindowFactory for f32 {
             StftWindow::Hann => pxwindow::Pxwindow::hann_f32(len),
             StftWindow::Hamming => pxwindow::Pxwindow::hamming_f32(len),
             StftWindow::Blackman => pxwindow::Pxwindow::blackman_f32(len),
+            StftWindow::Slepian { nw } => pxwindow::Pxwindow::slepian_f32(len, nw),
+            StftWindow::Kaiser { beta } => pxwindow::Pxwindow::kaiser_f32(len, beta as f32),
         }
     }
 }
@@ -117,6 +142,8 @@ impl WindowFactory for f64 {
             StftWindow::Hann => pxwindow::Pxwindow::hann_f64(len),
             StftWindow::Hamming => pxwindow::Pxwindow::hamming_f64(len),
             StftWindow::Blackman => pxwindow::Pxwindow::blackman_f64(len),
+            StftWindow::Slepian { nw } => pxwindow::Pxwindow::slepian_f64(len, nw),
+            StftWindow::Kaiser { beta } => pxwindow::Pxwindow::kaiser_f64(len, beta),
         }
     }
 }
@@ -242,7 +269,7 @@ where
 }
 
 /// Window functions supported by the STFT executor.
-#[derive(Clone, Default, Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Copy)]
+#[derive(Clone, Default, PartialOrd, PartialEq, Debug, Copy)]
 pub enum StftWindow {
     /// Hann window (default).
     #[default]
@@ -251,4 +278,12 @@ pub enum StftWindow {
     Hamming,
     /// Blackman window.
     Blackman,
+    /// Discrete Prolate Spheroidal Sequences (DPSS) or Slepian Window
+    Slepian {
+        /// Half-bandwidth, default is 4.0
+        nw: f64,
+    },
+    Kaiser {
+        beta: f64,
+    },
 }

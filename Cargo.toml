@@ -1,6 +1,6 @@
 [package]
 name = "magspec"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Short-time fourier transform"
 readme = "README.md"
@@ -17,7 +17,7 @@ rust-version = "1.87.0"
 [dependencies]
 zaft = "0.3"
 num-traits = "0.2.19"
-pxwindow = "0.1.1"
+pxwindow = "0.1.2"
 num-complex = "0.4.6"
 
 [package.metadata.docs.rs]
