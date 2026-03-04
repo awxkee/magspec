@@ -28,7 +28,7 @@
  */
 use crate::error::try_vec;
 use crate::mla::fmla;
-use crate::{BufferStoreMut, MagspecError, StftExecutor, StftFrameMut, StftSample, StftWindow};
+use crate::{BufferStoreMut, MagspecError, StftExecutor, StftFrameMut, StftOptions, StftSample};
 use num_complex::Complex;
 use num_traits::{AsPrimitive, Zero};
 use std::sync::Arc;
@@ -44,25 +44,47 @@ pub(crate) struct StftExecutorImplReal<T> {
     normalize: bool,
     window: Vec<T>,
     forward_scratch_length: usize,
+    modulation: bool,
+}
+
+fn fftshift_inplace<T: Copy>(x: &mut [T]) {
+    let n = x.len();
+    if n <= 1 {
+        return;
+    }
+    let pivot = n.div_ceil(2);
+    x[..pivot].reverse();
+    x[pivot..].reverse();
+    x.reverse();
+}
+
+fn ifftshift<T: Clone>(x: &[T]) -> Vec<T> {
+    let n = x.len();
+    let s20 = n.div_ceil(2);
+
+    let mut output = Vec::with_capacity(n);
+    output.extend_from_slice(&x[s20..]);
+    output.extend_from_slice(&x[..s20]);
+
+    output
 }
 
 impl<T: StftSample> StftExecutorImplReal<T> {
-    pub(crate) fn new(
-        fft_size: usize,
-        hop_size: usize,
-        window_type: StftWindow,
-        normalize: bool,
-    ) -> Result<Self, MagspecError> {
-        let fft_r2c = T::make_r2c(fft_size)?;
-        let window = T::make_window(fft_size, window_type);
+    pub(crate) fn new(options: StftOptions) -> Result<Self, MagspecError> {
+        let fft_r2c = T::make_r2c(options.len)?;
+        let mut window = T::make_window(options.len, options.window);
+        if options.modulation {
+            window = ifftshift(&window);
+        }
         let forward_scratch_length = fft_r2c.complex_scratch_length();
         Ok(StftExecutorImplReal {
             fft_r2c,
-            fft_size,
-            hop_size: hop_size.max(1),
+            fft_size: options.len,
+            hop_size: options.hop_size.max(1),
             window,
             forward_scratch_length,
-            normalize,
+            normalize: options.normalize,
+            modulation: options.modulation,
         })
     }
 }
@@ -169,27 +191,48 @@ where
             ));
         }
         let norm = 1f64.as_() / (fft_size as f64).sqrt().as_();
+
         for frame in 0..width {
             let start = frame * hop_size;
-            let input = if start + fft_size < input.len() {
-                &input[start..start + fft_size]
-            } else {
-                &input[start..]
-            };
 
-            for ((dst, &src), &w) in real_working_scratch
-                .iter_mut()
-                .zip(input.iter())
-                .zip(self.window.iter())
-            {
-                *dst = src * w;
+            if self.modulation {
+                let input = if start + fft_size <= input.len() {
+                    &input[start..start + fft_size]
+                } else {
+                    &input[start..]
+                };
+                real_working_scratch[..input.len()].copy_from_slice(input);
+                if input.len() != fft_size {
+                    real_working_scratch[input.len()..].fill(T::zero());
+                }
+
+                fftshift_inplace(real_working_scratch);
+
+                for (dst, &w) in real_working_scratch.iter_mut().zip(self.window.iter()) {
+                    *dst *= w;
+                }
+            } else {
+                let input = if start + fft_size <= input.len() {
+                    &input[start..start + fft_size]
+                } else {
+                    &input[start..]
+                };
+                for ((dst, &src), &w) in real_working_scratch
+                    .iter_mut()
+                    .zip(input.iter())
+                    .zip(self.window.iter())
+                {
+                    *dst = src * w;
+                }
+                if input.len() != fft_size {
+                    real_working_scratch[input.len()..].fill(T::zero());
+                }
             }
-            if input.len() != fft_size {
-                real_working_scratch[input.len()..].fill(T::zero());
-            }
+
             self.fft_r2c
                 .execute_with_scratch(real_working_scratch, output_scratch, fft_scratch)
                 .map_err(|x| MagspecError::FftError(x.to_string()))?;
+
             let output = into.data.borrow_mut();
             if self.normalize {
                 for (i, &input) in output_scratch.iter().enumerate() {
@@ -279,25 +322,45 @@ where
         let norm = 1f64.as_() / (fft_size as f64).sqrt().as_();
         for frame in 0..width {
             let start = frame * hop_size;
-            let input = if start + fft_size < input.len() {
-                &input[start..start + fft_size]
-            } else {
-                &input[start..]
-            };
 
-            for ((dst, &src), &w) in real_working_scratch
-                .iter_mut()
-                .zip(input.iter())
-                .zip(self.window.iter())
-            {
-                *dst = src * w;
+            if self.modulation {
+                let input = if start + fft_size <= input.len() {
+                    &input[start..start + fft_size]
+                } else {
+                    &input[start..]
+                };
+                real_working_scratch[..input.len()].copy_from_slice(input);
+                if input.len() != fft_size {
+                    real_working_scratch[input.len()..].fill(T::zero());
+                }
+
+                fftshift_inplace(real_working_scratch);
+
+                for (dst, &w) in real_working_scratch.iter_mut().zip(self.window.iter()) {
+                    *dst *= w;
+                }
+            } else {
+                let input = if start + fft_size <= input.len() {
+                    &input[start..start + fft_size]
+                } else {
+                    &input[start..]
+                };
+                for ((dst, &src), &w) in real_working_scratch
+                    .iter_mut()
+                    .zip(input.iter())
+                    .zip(self.window.iter())
+                {
+                    *dst = src * w;
+                }
+                if input.len() != fft_size {
+                    real_working_scratch[input.len()..].fill(T::zero());
+                }
             }
-            if input.len() != fft_size {
-                real_working_scratch[input.len()..].fill(T::zero());
-            }
+
             self.fft_r2c
                 .execute_with_scratch(real_working_scratch, output_scratch, fft_scratch)
                 .map_err(|x| MagspecError::FftError(x.to_string()))?;
+
             let output = into.data.borrow_mut();
             if self.normalize {
                 for (i, &input) in output_scratch.iter().enumerate() {
@@ -324,5 +387,22 @@ where
         let real_fft_scratch = self.fft_size.div_ceil(2);
         let complex_length = self.fft_size / 2 + 1;
         real_fft_scratch + self.forward_scratch_length + complex_length
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub fn fftshift<T: Clone + Copy>(x: &[T]) -> Vec<T> {
+        let mut out = x.to_vec();
+        fftshift_inplace(&mut out);
+        out
+    }
+
+    #[test]
+    fn test_fft_shift() {
+        assert_eq!(fftshift(&[0, 1, 2, 3, 4, 5]), vec![3, 4, 5, 0, 1, 2]);
+        assert_eq!(fftshift(&[0, 1, 2, 3, 4]), vec![3, 4, 0, 1, 2]);
     }
 }
