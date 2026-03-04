@@ -52,7 +52,7 @@ fn fftshift_inplace<T: Copy>(x: &mut [T]) {
     if n <= 1 {
         return;
     }
-    let pivot = (n + 1) / 2;
+    let pivot = n.div_ceil(2);
     x[..pivot].reverse();
     x[pivot..].reverse();
     x.reverse();
@@ -60,7 +60,7 @@ fn fftshift_inplace<T: Copy>(x: &mut [T]) {
 
 fn ifftshift<T: Clone>(x: &[T]) -> Vec<T> {
     let n = x.len();
-    let s20 = (n + 1) / 2;
+    let s20 = n.div_ceil(2);
 
     let mut output = Vec::with_capacity(n);
     output.extend_from_slice(&x[s20..]);
@@ -209,7 +209,7 @@ where
                 fftshift_inplace(real_working_scratch);
 
                 for (dst, &w) in real_working_scratch.iter_mut().zip(self.window.iter()) {
-                    *dst = *dst * w;
+                    *dst *= w;
                 }
             } else {
                 let input = if start + fft_size <= input.len() {
@@ -337,7 +337,7 @@ where
                 fftshift_inplace(real_working_scratch);
 
                 for (dst, &w) in real_working_scratch.iter_mut().zip(self.window.iter()) {
-                    *dst = *dst * w;
+                    *dst *= w;
                 }
             } else {
                 let input = if start + fft_size <= input.len() {
