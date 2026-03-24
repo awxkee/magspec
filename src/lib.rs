@@ -81,7 +81,7 @@ impl Magspec {
     /// cloneable via [`Arc`] and safe to share across threads.
     pub fn make_forward_f32(
         options: StftOptions,
-    ) -> Result<Arc<dyn StftExecutor<f32>>, MagspecError> {
+    ) -> Result<Arc<dyn StftExecutor<f32> + Send + Sync>, MagspecError> {
         Ok(Arc::new(StftExecutorImplReal::new(options)?))
     }
 
@@ -92,7 +92,7 @@ impl Magspec {
     /// at the cost of roughly twice the memory and compute.
     pub fn make_forward_f64(
         options: StftOptions,
-    ) -> Result<Arc<dyn StftExecutor<f64>>, MagspecError> {
+    ) -> Result<Arc<dyn StftExecutor<f64> + Send + Sync>, MagspecError> {
         Ok(Arc::new(StftExecutorImplReal::new(options)?))
     }
 }
