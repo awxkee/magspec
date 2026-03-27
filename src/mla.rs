@@ -26,8 +26,9 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-use num_traits::MulAdd;
-use std::ops::{Add, Mul};
+use num_complex::Complex;
+use num_traits::{MulAdd, Num};
+use std::ops::{Add, Mul, Neg};
 
 #[cfg(any(
     all(
@@ -59,4 +60,17 @@ pub(crate) fn fmla<T: Copy + Mul<T, Output = T> + Add<T, Output = T> + MulAdd<T,
     c: T,
 ) -> T {
     a * b + c
+}
+
+#[inline(always)]
+pub(crate) fn c_mul_t_add_fast<
+    T: Copy + Clone + Num + Neg<Output = T> + Mul<T, Output = T> + MulAdd<T, Output = T>,
+>(
+    a: Complex<T>,
+    b: T,
+    c: Complex<T>,
+) -> Complex<T> {
+    let re = fmla(a.re, b, c.re);
+    let im = fmla(a.im, b, c.im);
+    Complex { re, im }
 }
