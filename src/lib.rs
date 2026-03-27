@@ -35,13 +35,13 @@ use std::sync::Arc;
 use zaft::{R2CFftExecutor, Zaft};
 
 mod error;
+mod frequencies;
 mod mla;
 mod run;
-mod frequencies;
 
 use crate::run::StftExecutorImplReal;
 pub use error::MagspecError;
-pub use frequencies::{remap_freq_log_interp, FreqInterpMethod, FreqRemapArgs};
+pub use frequencies::{FreqInterpMethod, FreqRemapArgs, remap_freq_log_interp};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StftOptions {
