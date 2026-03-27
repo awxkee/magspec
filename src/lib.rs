@@ -35,11 +35,13 @@ use std::sync::Arc;
 use zaft::{R2CFftExecutor, Zaft};
 
 mod error;
+mod frequencies;
 mod mla;
 mod run;
 
 use crate::run::StftExecutorImplReal;
 pub use error::MagspecError;
+pub use frequencies::{FreqInterpMethod, FreqRemapArgs, remap_freq_log_interp};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StftOptions {
@@ -245,7 +247,7 @@ where
 /// Mutable STFT result frame used for zero-allocation execution paths.
 pub struct StftFrameMut<'a, T>
 where
-    [T]: ToOwned,
+    [T]: ToOwned<Owned = Vec<T>>,
 {
     /// Mutable backing storage of size `width * height`.
     pub data: BufferStoreMut<'a, T>,
@@ -257,7 +259,7 @@ where
 
 impl<T> StftFrameMut<'_, T>
 where
-    [T]: ToOwned,
+    [T]: ToOwned<Owned = Vec<T>>,
 {
     pub fn as_ref(&self) -> StftFrame<'_, T> {
         StftFrame {

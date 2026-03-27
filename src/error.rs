@@ -34,20 +34,27 @@ pub enum MagspecError {
     FftError(String),
     InvalidScratchSize(usize, usize),
     InvalidFrame(String),
+    InvalidRemapArgs(String),
+    FreqOutOfRange { f: f32, min: f32, max: f32 },
 }
 
 impl std::fmt::Display for MagspecError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            MagspecError::FftError(msg) => f.write_fmt(format_args!("Internal FFT error: {}", msg)),
-            MagspecError::InvalidScratchSize(size, expected) => f.write_fmt(format_args!(
-                "Scratch size is {} but expected {}",
-                size, expected
-            )),
-            MagspecError::Allocation(size) => {
-                f.write_fmt(format_args!("Failed to allocate buffer with size {size}"))
+            MagspecError::FftError(msg) => write!(f, "Internal FFT error: {}", msg),
+            MagspecError::InvalidScratchSize(size, expected) => {
+                write!(f, "Scratch size is {} but expected {}", size, expected)
             }
-            MagspecError::InvalidFrame(s) => f.write_str(s),
+            MagspecError::Allocation(size) => {
+                write!(f, "Failed to allocate buffer of size {}", size)
+            }
+            MagspecError::InvalidFrame(s) => write!(f, "Invalid frame: {}", s),
+            MagspecError::InvalidRemapArgs(s) => write!(f, "Invalid remap arguments: {}", s),
+            MagspecError::FreqOutOfRange { f: freq, min, max } => write!(
+                f,
+                "Frequency {:.2} Hz is out of range [{:.2}, {:.2}] Hz",
+                freq, min, max
+            ),
         }
     }
 }
