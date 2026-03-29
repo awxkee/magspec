@@ -31,6 +31,39 @@ use crate::mla::{c_mul_t_add_fast, fmla};
 use crate::{BufferStoreMut, MagspecError, StftFrame, StftFrameMut};
 use num_complex::Complex;
 use num_traits::Zero;
+use pxfm::f_powf;
+
+pub(crate) trait FreqBlend: Copy + Zero {
+    fn blend(self, wa: f32, other: Self, wb: f32) -> Self;
+}
+
+impl FreqBlend for f32 {
+    #[inline(always)]
+    fn blend(self, wa: f32, other: Self, wb: f32) -> Self {
+        fmla(self, wa, other * wb)
+    }
+}
+
+impl FreqBlend for f64 {
+    #[inline(always)]
+    fn blend(self, wa: f32, other: Self, wb: f32) -> Self {
+        fmla(self, wa as f64, other * wb as f64)
+    }
+}
+
+impl FreqBlend for Complex<f32> {
+    #[inline(always)]
+    fn blend(self, wa: f32, other: Self, wb: f32) -> Self {
+        c_mul_t_add_fast(self, wa, other * wb)
+    }
+}
+
+impl FreqBlend for Complex<f64> {
+    #[inline(always)]
+    fn blend(self, wa: f32, other: Self, wb: f32) -> Self {
+        c_mul_t_add_fast(self, wa as f64, other * wb as f64)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum FreqInterpMethod {
@@ -49,24 +82,42 @@ pub struct FreqRemapArgs {
     /// as `sample_rate / fft_size`.
     pub fft_size: usize,
     /// Lowest output frequency in Hz. Must be > 0 and < `f_max`.
-    /// Typically 20 Hz for audio, or `sample_rate / fft_size` to start at bin 1.
     pub f_min: f32,
     /// Highest output frequency in Hz. Must be <= `sample_rate / 2` (Nyquist).
     pub f_max: f32,
-    /// Number of output frequency bins. Can differ from the input bin count —
-    /// increase for more frequency resolution in the log domain, decrease to
-    /// compress. Typically set equal to the input `height` or a fixed display height.
+    /// Number of output frequency bins.
     pub num_bins_out: usize,
     /// Interpolation method to use along the frequency axis.
     pub method: FreqInterpMethod,
 }
 
 impl FreqRemapArgs {
-    pub fn apply<'a>(
+    pub fn apply_complex<'a>(
         &self,
         frame: &StftFrame<'a, Complex<f32>>,
     ) -> Result<StftFrameMut<'static, Complex<f32>>, MagspecError> {
-        remap_freq_log_interp(frame, self)
+        remap_freq_log_interp_impl(frame, self)
+    }
+
+    pub fn apply_complex_f64<'a>(
+        &self,
+        frame: &StftFrame<'a, Complex<f64>>,
+    ) -> Result<StftFrameMut<'static, Complex<f64>>, MagspecError> {
+        remap_freq_log_interp_impl(frame, self)
+    }
+
+    pub fn apply<'a>(
+        &self,
+        frame: &StftFrame<'a, f32>,
+    ) -> Result<StftFrameMut<'static, f32>, MagspecError> {
+        remap_freq_log_interp_impl(frame, self)
+    }
+
+    pub fn apply_f64<'a>(
+        &self,
+        frame: &StftFrame<'a, f64>,
+    ) -> Result<StftFrameMut<'static, f64>, MagspecError> {
+        remap_freq_log_interp_impl(frame, self)
     }
 }
 
@@ -77,23 +128,46 @@ struct BinMap {
 }
 
 /// Remap the frequency axis of an STFT frame from linear to log scale.
-///
-/// Each output bin is mapped to a log-spaced frequency between `f_min` and
-/// `f_max`, then interpolated from the nearest input bins using the chosen
-/// [`FreqInterpMethod`]. This compresses high frequencies and expands low
-/// frequencies, matching how pitch is perceived by the human ear.
-///
-/// # Layout
-/// Expects `data[freq_bin * num_frames + time_frame]`,
-/// i.e. `width = num_frames`, `height = num_bins`.
-/// Output follows the same layout with `width = num_bins_out`.
-pub fn remap_freq_log_interp(
+pub fn remap_freq_log_interp_complex(
     frame: &StftFrame<'_, Complex<f32>>,
     args: &FreqRemapArgs,
 ) -> Result<StftFrameMut<'static, Complex<f32>>, MagspecError> {
+    remap_freq_log_interp_impl(frame, args)
+}
+
+/// Remap the frequency axis of an STFT frame from linear to log scale.
+pub fn remap_freq_log_interp_complex_f64(
+    frame: &StftFrame<'_, Complex<f64>>,
+    args: &FreqRemapArgs,
+) -> Result<StftFrameMut<'static, Complex<f64>>, MagspecError> {
+    remap_freq_log_interp_impl(frame, args)
+}
+
+/// Remap the frequency axis of an STFT frame from linear to log scale.
+pub fn remap_freq_log_interp(
+    frame: &StftFrame<'_, f32>,
+    args: &FreqRemapArgs,
+) -> Result<StftFrameMut<'static, f32>, MagspecError> {
+    remap_freq_log_interp_impl(frame, args)
+}
+
+/// Remap the frequency axis of an STFT frame from linear to log scale.
+pub fn remap_freq_log_interp_f64(
+    frame: &StftFrame<'_, f64>,
+    args: &FreqRemapArgs,
+) -> Result<StftFrameMut<'static, f64>, MagspecError> {
+    remap_freq_log_interp_impl(frame, args)
+}
+
+/// Remap the frequency axis of an STFT frame from linear to log scale.
+fn remap_freq_log_interp_impl<T: FreqBlend>(
+    frame: &StftFrame<'_, T>,
+    args: &FreqRemapArgs,
+) -> Result<StftFrameMut<'static, T>, MagspecError> {
     let num_frames = frame.width;
     let num_bins_in = frame.height;
 
+    // ── validation ────────────────────────────────────────────────────────────
     if num_frames == 0 || num_bins_in == 0 {
         return Err(MagspecError::InvalidFrame(format!(
             "frame dimensions are zero (width={}, height={})",
@@ -134,6 +208,7 @@ pub fn remap_freq_log_interp(
 
     let bin_hz = args.sample_rate / args.fft_size as f32;
 
+    // Fast path: output is identical to input — just clone the buffer.
     if args.num_bins_out == num_bins_in
         && (args.f_min / bin_hz) < 0.001
         && (args.f_max / bin_hz - (num_bins_in - 1) as f32).abs() < 0.001
@@ -145,10 +220,11 @@ pub fn remap_freq_log_interp(
         });
     }
 
+    // ── build bin map (log-spaced, computed once) ─────────────────────────────
     let bin_maps: Vec<BinMap> = (0..args.num_bins_out)
         .map(|j| {
             let t = j as f32 / (args.num_bins_out - 1) as f32;
-            let frac = (args.f_min * (args.f_max / args.f_min).powf(t) / bin_hz)
+            let frac = (args.f_min * f_powf(args.f_max / args.f_min, t) / bin_hz)
                 .clamp(0.0, (num_bins_in - 1) as f32);
             let lo = frac.floor() as usize;
             BinMap {
@@ -159,8 +235,9 @@ pub fn remap_freq_log_interp(
         })
         .collect();
 
-    let mut out = try_vec![Complex::zero(); args.num_bins_out * num_frames];
+    let mut out = try_vec![T::zero(); args.num_bins_out * num_frames];
 
+    // ── interpolation — same logic for all T via FreqBlend ───────────────────
     match args.method {
         FreqInterpMethod::Bilinear => {
             for (j, bm) in bin_maps.iter().enumerate() {
@@ -174,8 +251,8 @@ pub fn remap_freq_log_interp(
                 row_out
                     .iter_mut()
                     .zip(row_lo.iter().zip(row_hi.iter()))
-                    .for_each(|(out, (lo, hi))| {
-                        *out = c_mul_t_add_fast(*lo, a0, *hi * a1);
+                    .for_each(|(dst, (&lo, &hi))| {
+                        *dst = lo.blend(a0, hi, a1);
                     });
             }
         }
@@ -206,12 +283,9 @@ pub fn remap_freq_log_interp(
                         row0.iter()
                             .zip(row1.iter().zip(row2.iter().zip(row3.iter()))),
                     )
-                    .for_each(|(out, (r0, (r1, (r2, r3))))| {
-                        *out = c_mul_t_add_fast(
-                            *r0,
-                            w0,
-                            c_mul_t_add_fast(*r1, w1, c_mul_t_add_fast(*r2, w2, *r3 * w3)),
-                        );
+                    .for_each(|(dst, (&r0, (&r1, (&r2, &r3))))| {
+                        // r0*w0 + r1*w1 + r2*w2 + r3*w3, all via FreqBlend
+                        *dst = r0.blend(w0, r1.blend(w1, r2.blend(w2, r3, w3), 1.0), 1.0);
                     });
             }
         }
@@ -219,7 +293,7 @@ pub fn remap_freq_log_interp(
 
     Ok(StftFrameMut {
         data: BufferStoreMut::Owned(out),
-        width: args.num_bins_out,
-        height: num_frames,
+        width: num_frames,
+        height: args.num_bins_out,
     })
 }
