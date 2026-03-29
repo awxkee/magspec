@@ -19,7 +19,7 @@ let stft_plan = Magspec::make_forward_f32(StftOptions {
 let stft_result = stft_plan.execute(&signal)?;
 // optionally draw spectrogram using spectrograph
 use spectrograph::{Normalizer, SpectrographOptions, rgb_spectrograph_color_f32, SpectrographFrame};
-let scalogram = rgb_spectrograph_color_f32(&SpectrographFrame {
+let scalogram = rgb_spectrograph_f32(&SpectrographFrame {
     data: std::borrow::Cow::Borrowed(stft_result.data.borrow()),
     width: stft_result.width,
     height: stft_result.height,

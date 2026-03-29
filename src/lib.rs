@@ -26,6 +26,7 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#![allow(clippy::manual_clamp)]
 use num_complex::Complex;
 use num_traits::real::Real;
 use num_traits::{MulAdd, Num, Zero};
@@ -36,12 +37,20 @@ use zaft::{R2CFftExecutor, Zaft};
 
 mod error;
 mod frequencies;
+mod mel;
 mod mla;
 mod run;
 
 use crate::run::StftExecutorImplReal;
 pub use error::MagspecError;
-pub use frequencies::{FreqInterpMethod, FreqRemapArgs, remap_freq_log_interp};
+pub use frequencies::{
+    FreqInterpMethod, FreqRemapArgs, remap_freq_log_interp, remap_freq_log_interp_complex,
+    remap_freq_log_interp_complex_f64, remap_freq_log_interp_f64,
+};
+pub use mel::{
+    MelFilterbankArgs, MelNorm, MelScale, apply_mel_filterbank, apply_mel_filterbank_complex,
+    apply_mel_filterbank_complex_f64, apply_mel_filterbank_f64,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StftOptions {

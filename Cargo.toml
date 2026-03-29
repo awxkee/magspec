@@ -1,6 +1,6 @@
 [package]
 name = "magspec"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "Short-time fourier transform"
 readme = "README.md"
@@ -19,6 +19,7 @@ zaft = "0.3"
 num-traits = "0.2.19"
 pxwindow = "0.1.2"
 num-complex = "0.4.6"
+pxfm = "0.1.28"
 
 [package.metadata.docs.rs]
 # To build locally:
