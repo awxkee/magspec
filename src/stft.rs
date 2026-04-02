@@ -47,7 +47,7 @@ pub(crate) struct StftExecutorImplReal<T> {
     modulation: bool,
 }
 
-fn fftshift_inplace<T: Copy>(x: &mut [T]) {
+pub(crate) fn fftshift_inplace<T: Copy>(x: &mut [T]) {
     let n = x.len();
     if n <= 1 {
         return;
@@ -58,7 +58,7 @@ fn fftshift_inplace<T: Copy>(x: &mut [T]) {
     x.reverse();
 }
 
-fn ifftshift<T: Clone>(x: &[T]) -> Vec<T> {
+pub(crate) fn ifftshift<T: Clone>(x: &[T]) -> Vec<T> {
     let n = x.len();
     let s20 = n.div_ceil(2);
 
@@ -148,13 +148,8 @@ where
         let (cut_scratch, _) = scratch.split_at_mut(self.forward_scratch_size());
         let (fft_scratch, rem_scratch0) = cut_scratch.split_at_mut(fft_scratch_size);
         let (output_scratch, rem_scratch) = rem_scratch0.split_at_mut(complex_length);
-        assert_eq!(align_of::<T>(), align_of::<Complex<T>>());
-        assert_eq!(size_of::<T>() * 2, size_of::<Complex<T>>());
-        assert_eq!(self.fft_size.div_ceil(2), rem_scratch.len());
-        let rem_casted = unsafe {
-            std::slice::from_raw_parts_mut(rem_scratch.as_mut_ptr() as *mut T, self.fft_size)
-        };
-        let real_working_scratch = &mut rem_casted[..fft_size];
+        let (_, aligned_mut, _) = unsafe { rem_scratch.align_to_mut::<T>() };
+        let real_working_scratch = &mut aligned_mut[..fft_size];
         let mut input: std::borrow::Cow<'_, [T]> = std::borrow::Cow::Borrowed(r_input);
         if input.len() < self.fft_size {
             let mut new_input = try_vec![T::zero(); fft_size];
