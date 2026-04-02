@@ -30,18 +30,23 @@
 use num_complex::Complex;
 use num_traits::real::Real;
 use num_traits::{MulAdd, Num, Zero};
+use pxfm::{f_log, f_logf};
 use std::fmt::Debug;
-use std::ops::{Div, Mul, MulAssign};
+use std::ops::{AddAssign, Div, Mul, MulAssign};
 use std::sync::Arc;
-use zaft::{R2CFftExecutor, Zaft};
+use zaft::{C2RFftExecutor, FftExecutor, R2CFftExecutor, Zaft};
 
+mod cepstrogram;
 mod error;
 mod frequencies;
 mod mel;
 mod mla;
-mod run;
+mod stft;
+mod tempogram;
 
-use crate::run::StftExecutorImplReal;
+use crate::cepstrogram::{CepstrogramExecutor, CepstrogramImpl};
+use crate::stft::StftExecutorImplReal;
+use crate::tempogram::TempogramExecutorImpl;
 pub use error::MagspecError;
 pub use frequencies::{
     FreqInterpMethod, FreqRemapArgs, remap_freq_log_interp, remap_freq_log_interp_complex,
@@ -51,6 +56,7 @@ pub use mel::{
     MelFilterbankArgs, MelNorm, MelScale, apply_mel_filterbank, apply_mel_filterbank_complex,
     apply_mel_filterbank_complex_f64, apply_mel_filterbank_f64,
 };
+pub use tempogram::{TempogramExecutor, TempogramMethod, TempogramOptions};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StftOptions {
@@ -106,6 +112,34 @@ impl Magspec {
     ) -> Result<Arc<dyn StftExecutor<f64> + Send + Sync>, MagspecError> {
         Ok(Arc::new(StftExecutorImplReal::new(options)?))
     }
+
+    /// Creates a single-precision (f32) tempogram executor.
+    pub fn make_tempogram_f32(
+        options: TempogramOptions,
+    ) -> Result<Arc<dyn TempogramExecutor<f32> + Send + Sync>, MagspecError> {
+        Ok(Arc::new(TempogramExecutorImpl::new(options)?))
+    }
+
+    /// Creates a double-precision (f64) tempogram executor.
+    pub fn make_tempogram_f64(
+        options: TempogramOptions,
+    ) -> Result<Arc<dyn TempogramExecutor<f64> + Send + Sync>, MagspecError> {
+        Ok(Arc::new(TempogramExecutorImpl::new(options)?))
+    }
+
+    /// Creates a single-precision (f32) cepstrogram executor.
+    pub fn make_cepstrogram_f32(
+        options: StftOptions,
+    ) -> Result<Arc<dyn CepstrogramExecutor<f32> + Send + Sync>, MagspecError> {
+        Ok(Arc::new(CepstrogramImpl::new(options)?))
+    }
+
+    /// Creates a double-precision (f64) cepstrogram executor.
+    pub fn make_cepstrogram_f64(
+        options: StftOptions,
+    ) -> Result<Arc<dyn CepstrogramExecutor<f64> + Send + Sync>, MagspecError> {
+        Ok(Arc::new(CepstrogramImpl::new(options)?))
+    }
 }
 
 pub(crate) trait StftSample:
@@ -121,14 +155,27 @@ pub(crate) trait StftSample:
     + MulAssign
     + MulAdd<Self, Output = Self>
     + Real
+    + AddAssign
 {
+    fn c_log(&self) -> Self;
 }
 
-impl StftSample for f32 {}
-impl StftSample for f64 {}
+impl StftSample for f32 {
+    #[inline(always)]
+    fn c_log(&self) -> Self {
+        f_logf(*self)
+    }
+}
+impl StftSample for f64 {
+    fn c_log(&self) -> Self {
+        f_log(*self)
+    }
+}
 
 pub(crate) trait FftFactory {
     fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError>;
+    fn make_c2r(len: usize) -> Result<Arc<dyn C2RFftExecutor<Self> + Send + Sync>, MagspecError>;
+    fn make_c2c(len: usize) -> Result<Arc<dyn FftExecutor<Self> + Send + Sync>, MagspecError>;
 }
 
 pub(crate) trait WindowFactory: Sized {
@@ -163,11 +210,27 @@ impl FftFactory for f32 {
     fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError> {
         Zaft::make_r2c_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
     }
+
+    fn make_c2r(len: usize) -> Result<Arc<dyn C2RFftExecutor<Self> + Send + Sync>, MagspecError> {
+        Zaft::make_c2r_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+
+    fn make_c2c(len: usize) -> Result<Arc<dyn FftExecutor<Self> + Send + Sync>, MagspecError> {
+        Zaft::make_forward_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
 }
 
 impl FftFactory for f64 {
     fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError> {
         Zaft::make_r2c_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+
+    fn make_c2r(len: usize) -> Result<Arc<dyn C2RFftExecutor<Self> + Send + Sync>, MagspecError> {
+        Zaft::make_c2r_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+
+    fn make_c2c(len: usize) -> Result<Arc<dyn FftExecutor<Self> + Send + Sync>, MagspecError> {
+        Zaft::make_forward_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
     }
 }
 
