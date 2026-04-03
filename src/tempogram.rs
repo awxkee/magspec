@@ -115,11 +115,9 @@ where
     where
         f64: AsPrimitive<T>,
     {
-        // Step 1: magnitude STFT → onset envelope
         let mag = self.stft.execute_magnitude(input)?;
         let env = self.onset_envelope(&mag)?;
 
-        // Step 2: allocate output and scratch, then compute
         let mut frame = self.new_frame(env.len())?;
         let mut scratch = try_vec![Complex::<T>::zero(); self.scratch_size()];
 
@@ -142,7 +140,6 @@ where
             TempogramMethod::Fourier => {
                 self.fft_scratch_length + self.tempo_window_size + self.tempo_window_size / 2 + 1
             }
-            // needs: just the lag accumulator
             TempogramMethod::Autocorrelation => self.tempo_window_size,
         }
     }
@@ -217,10 +214,6 @@ where
         }
         Ok(env)
     }
-
-    // ------------------------------------------------------------------ //
-    //  Column computation                                                  //
-    // ------------------------------------------------------------------ //
 
     /// Fill one tempogram column using autocorrelation.
     /// `col` has length `tempo_window_size` (= number of lags).
