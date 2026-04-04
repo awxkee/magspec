@@ -230,20 +230,12 @@ where
             if self.normalize {
                 for dst in output_scratch.iter_mut() {
                     let q = fmla(dst.re, dst.re, dst.im * dst.im).sqrt();
-                    if q != T::zero() {
-                        *dst = Complex::new(q.c_log() * norm, T::zero());
-                    } else {
-                        *dst = Complex::new(T::zero(), T::zero());
-                    }
+                    *dst = Complex::new((q + T::epsilon()).c_log() * norm, T::zero());
                 }
             } else {
                 for dst in output_scratch.iter_mut() {
                     let q = fmla(dst.re, dst.re, dst.im * dst.im).sqrt();
-                    if q != T::zero() {
-                        *dst = Complex::new(q.c_log(), T::zero());
-                    } else {
-                        *dst = Complex::new(T::zero(), T::zero());
-                    }
+                    *dst = Complex::new((q + T::epsilon()).c_log(), T::zero());
                 }
             }
 
