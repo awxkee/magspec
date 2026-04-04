@@ -18,5 +18,8 @@ jobs:
       - name: Mirror to GitLab
         run: |
           git remote add gitlab https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/awxkee/magspec
+          git remote add codeberg https://awxkee:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/awxkee/magspec.git
           git push gitlab --all
           git push gitlab --tags
+          git push codeberg --all
+          git push codeberg --tags
