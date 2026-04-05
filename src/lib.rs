@@ -30,11 +30,11 @@
 use num_complex::Complex;
 use num_traits::real::Real;
 use num_traits::{MulAdd, Num, Zero};
-use pxfm::{f_log, f_logf};
+use quefrency::Cepstrum;
 use std::fmt::Debug;
 use std::ops::{AddAssign, Div, Mul, MulAssign};
 use std::sync::Arc;
-use zaft::{C2RFftExecutor, FftExecutor, R2CFftExecutor, Zaft};
+use zaft::{FftExecutor, R2CFftExecutor, Zaft};
 
 mod cepstrogram;
 mod error;
@@ -92,10 +92,6 @@ pub struct Magspec {}
 
 impl Magspec {
     /// Create a single-precision (f32) STFT magnitude spectrogram executor.
-    ///
-    /// Pre-computes the window function and FFT twiddle factors for the given
-    /// options, so this call may allocate. The returned executor is cheaply
-    /// cloneable via [`Arc`] and safe to share across threads.
     pub fn make_forward_f32(
         options: StftOptions,
     ) -> Result<Arc<dyn StftExecutor<f32> + Send + Sync>, MagspecError> {
@@ -103,10 +99,6 @@ impl Magspec {
     }
 
     /// Create a double-precision (f64) STFT magnitude spectrogram executor.
-    ///
-    /// Identical to [`make_forward_f32`](Self::make_forward_f32) but operates
-    /// on `f64` samples. Use this when higher numerical precision is required,
-    /// at the cost of roughly twice the memory and compute.
     pub fn make_forward_f64(
         options: StftOptions,
     ) -> Result<Arc<dyn StftExecutor<f64> + Send + Sync>, MagspecError> {
@@ -157,25 +149,15 @@ pub(crate) trait StftSample:
     + Real
     + AddAssign
 {
-    fn c_log(&self) -> Self;
 }
 
-impl StftSample for f32 {
-    #[inline(always)]
-    fn c_log(&self) -> Self {
-        f_logf(*self)
-    }
-}
-impl StftSample for f64 {
-    fn c_log(&self) -> Self {
-        f_log(*self)
-    }
-}
+impl StftSample for f32 {}
+impl StftSample for f64 {}
 
 pub(crate) trait FftFactory {
     fn make_r2c(len: usize) -> Result<Arc<dyn R2CFftExecutor<Self> + Send + Sync>, MagspecError>;
-    fn make_c2r(len: usize) -> Result<Arc<dyn C2RFftExecutor<Self> + Send + Sync>, MagspecError>;
     fn make_c2c(len: usize) -> Result<Arc<dyn FftExecutor<Self> + Send + Sync>, MagspecError>;
+    fn make_cepstrum(len: usize, normalize: bool) -> Result<Cepstrum<Self>, MagspecError>;
 }
 
 pub(crate) trait WindowFactory: Sized {
@@ -211,12 +193,13 @@ impl FftFactory for f32 {
         Zaft::make_r2c_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
     }
 
-    fn make_c2r(len: usize) -> Result<Arc<dyn C2RFftExecutor<Self> + Send + Sync>, MagspecError> {
-        Zaft::make_c2r_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
-    }
-
     fn make_c2c(len: usize) -> Result<Arc<dyn FftExecutor<Self> + Send + Sync>, MagspecError> {
         Zaft::make_forward_fft_f32(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+
+    fn make_cepstrum(len: usize, normalize: bool) -> Result<Cepstrum<Self>, MagspecError> {
+        quefrency::make_cepstrum_f32(len, normalize)
+            .map_err(|x| MagspecError::FftError(x.to_string()))
     }
 }
 
@@ -225,12 +208,13 @@ impl FftFactory for f64 {
         Zaft::make_r2c_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
     }
 
-    fn make_c2r(len: usize) -> Result<Arc<dyn C2RFftExecutor<Self> + Send + Sync>, MagspecError> {
-        Zaft::make_c2r_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
-    }
-
     fn make_c2c(len: usize) -> Result<Arc<dyn FftExecutor<Self> + Send + Sync>, MagspecError> {
         Zaft::make_forward_fft_f64(len).map_err(|x| MagspecError::FftError(x.to_string()))
+    }
+
+    fn make_cepstrum(len: usize, normalize: bool) -> Result<Cepstrum<Self>, MagspecError> {
+        quefrency::make_cepstrum_f64(len, normalize)
+            .map_err(|x| MagspecError::FftError(x.to_string()))
     }
 }
 
