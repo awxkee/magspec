@@ -12,7 +12,7 @@ categories = ["algorithms", "science"]
 homepage = "https://github.com/awxkee/magspec"
 repository = "https://github.com/awxkee/magspec"
 exclude = ["*.jpg", "/assets", "*.png", "*.sh", "/assets/*"]
-rust-version = "1.87.0"
+rust-version = "1.90.0"
 
 [dependencies]
 zaft = "0.3"
@@ -20,6 +20,7 @@ num-traits = "0.2.19"
 pxwindow = "0.1.2"
 num-complex = "0.4.6"
 pxfm = "0.1.28"
+quefrency = "0.1.0"
 
 [package.metadata.docs.rs]
 # To build locally:

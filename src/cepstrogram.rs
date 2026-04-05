@@ -27,13 +27,11 @@
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 use crate::error::try_vec;
-use crate::mla::fmla;
 use crate::stft::{fftshift_inplace, ifftshift};
 use crate::{BufferStoreMut, MagspecError, StftFrameMut, StftOptions, StftSample};
 use num_complex::Complex;
 use num_traits::{AsPrimitive, Zero};
-use std::sync::Arc;
-use zaft::{C2RFftExecutor, R2CFftExecutor};
+use quefrency::Cepstrum;
 
 /// Executor trait for computing the Short-Time Cepstrogram.
 ///
@@ -67,14 +65,12 @@ where
 }
 
 pub(crate) struct CepstrogramImpl<T> {
-    fft_r2c: Arc<dyn R2CFftExecutor<T> + Send + Sync>,
-    fft_c2r: Arc<dyn C2RFftExecutor<T> + Send + Sync>,
+    quefrency: Cepstrum<T>,
     /// FFT / window size (must match engine size)
     fft_size: usize,
     /// Number of samples between successive frames (hop)
     hop_size: usize,
     /// If true, normalize each frame by 1/fft_size on inverse
-    normalize: bool,
     window: Vec<T>,
     fft_scratch_length: usize,
     modulation: bool,
@@ -82,23 +78,18 @@ pub(crate) struct CepstrogramImpl<T> {
 
 impl<T: StftSample> CepstrogramImpl<T> {
     pub(crate) fn new(options: StftOptions) -> Result<Self, MagspecError> {
-        let fft_r2c = T::make_r2c(options.len)?;
-        let fft_c2r = T::make_c2r(options.len)?;
+        let cepstrum = T::make_cepstrum(options.len, options.normalize)?;
         let mut window = T::make_window(options.len, options.window);
         if options.modulation {
             window = ifftshift(&window);
         }
-        let fft_scratch_length = fft_r2c
-            .complex_scratch_length()
-            .max(fft_c2r.complex_scratch_length());
+        let fft_scratch_length = cepstrum.scratch_size();
         Ok(CepstrogramImpl {
-            fft_r2c,
-            fft_c2r,
+            quefrency: cepstrum,
             fft_size: options.len,
             hop_size: options.hop_size.max(1),
             window,
             fft_scratch_length,
-            normalize: options.normalize,
             modulation: options.modulation,
         })
     }
@@ -146,8 +137,7 @@ where
         }
         let (cut_scratch, _) = scratch.split_at_mut(self.forward_scratch_size());
         let (fft_scratch, rem_scratch0) = cut_scratch.split_at_mut(fft_scratch_size);
-        let (output_scratch, rem_scratch) = rem_scratch0.split_at_mut(complex_length);
-        let (_, aligned_mut, _) = unsafe { rem_scratch.align_to_mut::<T>() };
+        let (_, aligned_mut, _) = unsafe { rem_scratch0.align_to_mut::<T>() };
         let real_working_scratch = &mut aligned_mut[..fft_size];
         let mut input: std::borrow::Cow<'_, [T]> = std::borrow::Cow::Borrowed(r_input);
         if input.len() < self.fft_size {
@@ -184,8 +174,6 @@ where
                 .to_string(),
             ));
         }
-        let norm = 1f64.as_() / (fft_size as f64).sqrt().as_();
-
         for frame in 0..width {
             let start = frame * hop_size;
 
@@ -223,24 +211,8 @@ where
                 }
             }
 
-            self.fft_r2c
-                .execute_with_scratch(real_working_scratch, output_scratch, fft_scratch)
-                .map_err(|x| MagspecError::FftError(x.to_string()))?;
-
-            if self.normalize {
-                for dst in output_scratch.iter_mut() {
-                    let q = fmla(dst.re, dst.re, dst.im * dst.im).sqrt();
-                    *dst = Complex::new((q + T::epsilon()).c_log() * norm, T::zero());
-                }
-            } else {
-                for dst in output_scratch.iter_mut() {
-                    let q = fmla(dst.re, dst.re, dst.im * dst.im).sqrt();
-                    *dst = Complex::new((q + T::epsilon()).c_log(), T::zero());
-                }
-            }
-
-            self.fft_c2r
-                .execute_with_scratch(output_scratch, real_working_scratch, fft_scratch)
+            self.quefrency
+                .execute_with_scratch(real_working_scratch, fft_scratch)
                 .map_err(|x| MagspecError::FftError(x.to_string()))?;
 
             let output = into.data.borrow_mut();
@@ -255,8 +227,7 @@ where
     #[inline]
     fn forward_scratch_size(&self) -> usize {
         let real_fft_scratch = self.fft_size.div_ceil(2);
-        let complex_length = self.fft_size / 2 + 1;
-        real_fft_scratch + self.fft_scratch_length + complex_length
+        real_fft_scratch + self.fft_scratch_length
     }
 
     fn output_height(&self) -> usize {
