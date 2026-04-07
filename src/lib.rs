@@ -44,7 +44,8 @@ mod mla;
 mod stft;
 mod tempogram;
 
-use crate::cepstrogram::{CepstrogramExecutor, CepstrogramImpl};
+pub use crate::cepstrogram::CepstrogramExecutor;
+use crate::cepstrogram::CepstrogramImpl;
 use crate::stft::StftExecutorImplReal;
 use crate::tempogram::TempogramExecutorImpl;
 pub use error::MagspecError;
